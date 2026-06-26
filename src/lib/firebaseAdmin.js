@@ -1,5 +1,6 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 
 function readAdminCredentials() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -20,11 +21,20 @@ function readAdminCredentials() {
 }
 
 export function getAdminAuth() {
-  const app =
+  const app = getAdminApp();
+
+  return getAuth(app);
+}
+
+function getAdminApp() {
+  return (
     getApps()[0] ||
     initializeApp({
       credential: cert(readAdminCredentials()),
-    });
+    })
+  );
+}
 
-  return getAuth(app);
+export function getAdminFirestore() {
+  return getFirestore(getAdminApp());
 }

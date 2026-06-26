@@ -1,7 +1,6 @@
 "use client";
 import LocalizacaoUsuario from "@/lib/location";
 
-
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -14,27 +13,46 @@ export default function QrLoginClient() {
     const [userUid, setUserUid] = useState("");
     const [error, setError] = useState("");
     const [position, setPosition] = useState(null);
+    const [savedRecordId, setSavedRecordId] = useState("");
+    const token = searchParams.get("token");
 
-    useEffect(() => {
-        LocalizacaoUsuario().then((posicao) => {
-            setPosition(posicao);
-        }).catch((erro) => {
-            setError(erro);
-        });
-    }, []);
     useEffect(() => {
         let active = true;
 
-        async function authenticate() {
-            const token = searchParams.get("token");
-
+        async function runFlow() {
             if (!token) {
                 setError("Token nao encontrado na URL.");
                 setStatus("Falha ao autenticar.");
                 return;
             }
 
+            setError("");
+            setSavedRecordId("");
+
+            let localizacao;
+            let authenticated = false;
+
             try {
+                setStatus("Obtendo localizacao...");
+                localizacao = await LocalizacaoUsuario();
+
+                if (!active) {
+                    return;
+                }
+
+                setPosition(localizacao);
+            } catch (locationError) {
+                if (!active) {
+                    return;
+                }
+
+                setError(locationError?.message || String(locationError) || "Erro ao obter localizacao.");
+                setStatus("Falha ao obter localizacao.");
+                return;
+            }
+
+            try {
+                setStatus("Autenticando no Firebase...");
                 const auth = getFirebaseAuth();
                 const credential = await signInWithCustomToken(auth, token);
 
@@ -42,24 +60,53 @@ export default function QrLoginClient() {
                     return;
                 }
 
-                setUserUid(credential.user.uid);
-                setStatus("Usuario autenticado com sucesso no Firebase.");
+                const uid = credential.user.uid;
+                authenticated = true;
+                setUserUid(uid);
+
+                setStatus("Salvando token e localizacao...");
+
+                const response = await fetch("/api/save-location", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        token,
+                        uid,
+                        localizacao,
+                    }),
+                });
+
+                const data = await response.json().catch(() => ({}));
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || "Erro ao salvar token e localizacao.");
+                }
+
+                setSavedRecordId(data.id || "");
+                setStatus("Usuario autenticado e localizacao salva no Firebase.");
             } catch (authError) {
                 if (!active) {
                     return;
                 }
 
                 setError(authError.message || "Erro ao autenticar usuario.");
+                if (authenticated) {
+                    setStatus("Usuario autenticado, mas houve falha ao salvar localizacao.");
+                    return;
+                }
+
                 setStatus("Falha ao autenticar.");
             }
         }
 
-        authenticate();
+        runFlow();
 
         return () => {
             active = false;
         };
-    }, [searchParams]);
+    }, [token]);
 
     return (
         <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
@@ -80,6 +127,12 @@ export default function QrLoginClient() {
                         <p>Longitude: {position.longitude}</p>
                     </div>
                 )}
+
+                {savedRecordId ? (
+                    <p className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800">
+                        Registro salvo no Firestore: {savedRecordId}
+                    </p>
+                ) : null}
 
                 {error ? (
                     <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
